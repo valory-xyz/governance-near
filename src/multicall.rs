@@ -67,7 +67,7 @@ mod tests {
 
     #[test]
     fn test_multicall() {
-        // Написать тесты для проверки контрактов
+        // TODO: tests
     }
 }
 
