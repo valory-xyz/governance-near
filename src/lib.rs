@@ -10,7 +10,7 @@ use near_sdk::serde_json::json;
 use near_sdk::collections::LazyOption;
 use near_sdk::collections::UnorderedSet;
 use near_sdk::{
-    env, near, require, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue, StorageUsage, Gas,
+    env, near_bindgen, require, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue, StorageUsage, Gas,
     IntoStorageKey, PromiseError, PromiseResult, NearToken, log
 };
 use near_sdk::near_bindgen;
@@ -79,7 +79,7 @@ impl WormholeRelayer {
     pub fn new(owner_id: AccountId, wormhole_core: AccountId, foreign_governor_address: Vec<u8>) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         Self {
-            owner: env::predecessor_account_id(),
+            owner: owner_id,
             wormhole_core,
             foreign_governor_address,
             dups: UnorderedSet::new(b"d".to_vec()),
@@ -99,17 +99,7 @@ impl WormholeRelayer {
     }
 
     pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
-        let mut bytes = Vec::new();
-        for call in calls.iter() {
-            match call.to_vec() {
-                Ok(mut call_bytes) => bytes.append(&mut call_bytes),
-                Err(e) => {
-                    env::log_str(&format!("Failed to serialize Call: {:?}", e));
-                    panic!("Failed to serialize Call");
-                }
-            }
-        }
-        bytes
+        near_sdk::serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
     }
 
     pub fn delivery(&mut self, vaa: String) -> Promise {
@@ -123,7 +113,7 @@ impl WormholeRelayer {
         let initial_storage_usage = env::storage_usage();
         self.dups.insert(&vaa.hash);
         let storage = env::storage_usage() - initial_storage_usage;
-        self.refund_deposit_to_account(storage, 0, env::predecessor_account_id(), true);
+        self.refund_deposit_to_account(storage, 0.into(), env::predecessor_account_id(), true);
 
         if vaa.emitter_chain != CHAIN_ID_MAINNET || vaa.emitter_address != self.foreign_governor_address {
             env::panic_str("InvalidGovernorEmitter");
@@ -136,25 +126,26 @@ impl WormholeRelayer {
         require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
 
         Promise::new(self.wormhole_core.clone())
-            .function_call("verify_vaa".to_string(), vaa.into_bytes(), NearToken::from_yoctonear(0), VERIFY_CALL_GAS)
+            .function_call("verify_vaa".to_string(), vaa.into_bytes(), NearToken::from(0), VERIFY_CALL_GAS)
             .then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
     }
 
     #[private]
     pub fn on_verify_complete(&self, calls: Vec<Call>) -> Vec<CallResult> {
-        let mut results = Vec::new();
+        let mut call_results = Vec::new();
+        let mut promises = Vec::new();
 
         if let PromiseResult::Successful(_) = env::promise_result(0) {
             for call in calls.iter() {
                 let promise = Promise::new(call.contract_id.clone()).function_call(
                     call.method_name.clone(),
                     call.args.clone(),
-                    NearToken::from_yoctonear(0), // attached deposit
-                    VERIFY_CALL_GAS,              // attached gas
+                    NearToken::from(0),
+                    VERIFY_CALL_GAS,
                 );
+                promises.push(promise);
             }
 
-            // Traverse all the external calls
             for (i, call) in calls.iter().enumerate() {
                 let result = match env::promise_result(i as u64) {
                     PromiseResult::Successful(data) => CallResult {
@@ -166,26 +157,20 @@ impl WormholeRelayer {
                         result: None,
                     },
                 };
-                results.push(result);
+                call_results.push(result);
             }
         } else {
-            for _ in calls.iter() {
-                results.push(CallResult {
-                    success: false,
-                    result: None,
-                });
-            }
+            call_results = calls.iter().map(|_| CallResult { success: false, result: None }).collect();
         }
 
-        results
+        call_results
     }
 
-    fn refund_deposit_to_account(&self, storage_used: u64, service_deposit: u128, account_id: AccountId, deposit_in: bool) {
-        let near_deposit = NearToken::from_yoctonear(service_deposit);
+    fn refund_deposit_to_account(&self, storage_used: u64, service_deposit: NearToken, account_id: AccountId, deposit_in: bool) {
         let mut required_cost = env::storage_byte_cost().saturating_mul(storage_used.into());
-        required_cost = required_cost.saturating_add(near_deposit);
+        required_cost = required_cost.saturating_add(service_deposit);
 
-        let mut refund = env::attached_deposit();
+        let mut refund = env::attached_deposit().into();
         if deposit_in {
             require!(required_cost <= refund);
             refund = refund.saturating_sub(required_cost);
@@ -193,10 +178,9 @@ impl WormholeRelayer {
             require!(required_cost <= env::account_balance());
             refund = refund.saturating_add(required_cost);
         }
-        if refund.as_yoctonear() > 1 {
+        if refund > NearToken::from(1) {
             Promise::new(account_id).transfer(refund);
         }
     }
 }
-
 
