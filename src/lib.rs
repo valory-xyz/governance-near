@@ -110,6 +110,18 @@ impl WormholeRelayer {
             .then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
     }
 
+    pub fn change_owner(&mut self, new_owner: AccountId) {
+        // Check the ownership
+        require!(self.owner == env::predecessor_account_id());
+
+        // Check account validity
+        require!(env::is_valid_account_id(new_owner.as_bytes()));
+
+        self.owner = new_owner;
+
+        // TODO: event
+    }
+
     #[private]
     pub fn on_verify_complete(&self, calls: Vec<Call>) -> Vec<CallResult> {
         let mut results = Vec::new();
