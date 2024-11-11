@@ -86,6 +86,32 @@ impl WormholeRelayer {
         }
     }
 
+    pub fn change_owner(&mut self, new_owner: AccountId) {
+        // Check the ownership
+        require!(self.owner == env::predecessor_account_id());
+
+        // Check account validity
+        require!(env::is_valid_account_id(new_owner.as_bytes()));
+
+        self.owner = new_owner;
+
+        // TODO: event
+    }
+
+    pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        for call in calls.iter() {
+            match call.to_vec() {
+                Ok(mut call_bytes) => bytes.append(&mut call_bytes),
+                Err(e) => {
+                    env::log_str(&format!("Failed to serialize Call: {:?}", e));
+                    panic!("Failed to serialize Call");
+                }
+            }
+        }
+        bytes
+    }
+
     pub fn delivery(&mut self, vaa: String) -> Promise {
         let h = hex::decode(vaa).expect("invalidVaa");
         let vaa = state::ParsedVAA::parse(&h);
@@ -112,18 +138,6 @@ impl WormholeRelayer {
         Promise::new(self.wormhole_core.clone())
             .function_call("verify_vaa".to_string(), vaa.into_bytes(), NearToken::from_yoctonear(0), VERIFY_CALL_GAS)
             .then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
-    }
-
-    pub fn change_owner(&mut self, new_owner: AccountId) {
-        // Check the ownership
-        require!(self.owner == env::predecessor_account_id());
-
-        // Check account validity
-        require!(env::is_valid_account_id(new_owner.as_bytes()));
-
-        self.owner = new_owner;
-
-        // TODO: event
     }
 
     #[private]
