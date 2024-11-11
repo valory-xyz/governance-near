@@ -36,6 +36,7 @@ const VERIFY_CALL_GAS: Gas = Gas::from_tgas(20);
 const DELIVERY_CALL_GAS: Gas = Gas::from_tgas(100);
 const CALL_CALL_GAS: Gas = Gas::from_tgas(5);
 const CHAIN_ID_MAINNET: u16 = 2;
+const MAX_NUM_CALLS: usize = 10;
 
 #[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug, PartialEq, Clone)]
 #[serde(crate = "near_sdk::serde")]
@@ -105,6 +106,9 @@ impl WormholeRelayer {
         let data: &[u8] = &vaa.payload;
         let calls: Vec<Call> = Vec::try_from_slice(data).expect("Failed to deserialize Vec<Call>");
 
+        // TODO Set a limit for calls.len
+        require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
+
         Promise::new(self.wormhole_core.clone())
             .function_call("verify_vaa".to_string(), vaa.into_bytes(), NearToken::from_yoctonear(0), VERIFY_CALL_GAS)
             .then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
@@ -128,7 +132,17 @@ impl WormholeRelayer {
 
         if let PromiseResult::Successful(_) = env::promise_result(0) {
             for call in calls.iter() {
-                let result = match env::promise_result(0) {
+                let promise = Promise::new(call.contract_id.clone()).function_call(
+                    call.method_name.clone(),
+                    call.args.clone(),
+                    NearToken::from_yoctonear(0), // attached deposit
+                    VERIFY_CALL_GAS,              // attached gas
+                );
+            }
+
+            // Traverse all the external calls
+            for (i, call) in calls.iter().enumerate() {
+                let result = match env::promise_result(i as u64) {
                     PromiseResult::Successful(data) => CallResult {
                         success: true,
                         result: Some(data),
