@@ -3,8 +3,10 @@ use {
     near_sdk::env,
 };
 
-// Validator Action Approval(VAA) data
+use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 
+// Validator Action Approval(VAA) data
+#[derive(BorshDeserialize, BorshSerialize)]
 pub struct ParsedVAA {
     pub version:            u8,
     pub guardian_set_index: u32,
@@ -107,5 +109,24 @@ impl ParsedVAA {
             payload,
             hash,
         }
+    }
+
+    pub fn into_bytes(&self) -> Vec<u8> {
+        let mut bytes = Vec::new();
+
+        bytes.push(self.version);
+        bytes.extend_from_slice(&self.guardian_set_index.to_be_bytes());
+        bytes.push(self.len_signers as u8);
+        
+        // Можно продолжить заполнять остальные поля структуры
+        bytes.extend_from_slice(&self.timestamp.to_be_bytes());
+        bytes.extend_from_slice(&self.nonce.to_be_bytes());
+        bytes.extend_from_slice(&self.emitter_chain.to_be_bytes());
+        bytes.extend_from_slice(&self.emitter_address);
+        bytes.extend_from_slice(&self.sequence.to_be_bytes());
+        bytes.push(self.consistency_level);
+        bytes.extend_from_slice(&self.payload);
+
+        bytes
     }
 }
