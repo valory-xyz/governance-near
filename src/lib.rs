@@ -2,9 +2,8 @@ use near_sdk::borsh::{self, BorshDeserialize};
 use near_sdk::serde::{Serialize, Deserialize};
 use near_sdk::collections::UnorderedSet;
 use near_sdk::{
-    env, near, require, AccountId, Promise, PromiseOrValue, Gas, PromiseResult, NearToken, log
+    env, near, ext_contract, require, AccountId, Promise, PromiseOrValue, Gas, PromiseResult, NearToken, log
 };
-use near_sdk::ext_contract;
 
 pub mod byte_utils;
 pub mod state;
