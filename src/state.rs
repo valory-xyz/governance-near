@@ -6,7 +6,7 @@ use {
 use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
 
 // Validator Action Approval(VAA) data
-#[derive(BorshDeserialize, BorshSerialize)]
+#[derive(BorshDeserialize, BorshSerialize, Debug)]
 pub struct ParsedVAA {
     pub version:            u8,
     pub guardian_set_index: u32,

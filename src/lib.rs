@@ -90,8 +90,11 @@ impl WormholeRelayer {
             env::panic_str("alreadyExecuted");
         }
 
+        log!("vaa: {:?}", vaa);
+
         let initial_storage_usage = env::storage_usage();
-        self.dups.insert(&vaa.hash);
+        // TODO enable in production
+        //self.dups.insert(&vaa.hash);
         let storage = env::storage_usage() - initial_storage_usage;
         self.refund_deposit_to_account(storage, NearToken::from_yoctonear(0), env::predecessor_account_id(), true);
 
@@ -100,10 +103,17 @@ impl WormholeRelayer {
         }
 
         let data: &[u8] = &vaa.payload;
+        log!("data: {:?}", data);
         let calls: Vec<Call> = Vec::try_from_slice(data).expect("Failed to deserialize Vec<Call>");
 
         // TODO Set a limit for calls.len
         require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
+
+        for call in calls.iter() {
+            log!("call contract_id: {}", call.contract_id);
+            log!("call method_name: {}", call.method_name);
+            log!("call args: {:?}", call.args);
+        }
 
         Promise::new(self.wormhole_core.clone())
             .function_call("verify_vaa".to_string(), vaa.into_bytes(), NearToken::from_yoctonear(0), VERIFY_CALL_GAS)
