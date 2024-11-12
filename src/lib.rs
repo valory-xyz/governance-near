@@ -28,7 +28,7 @@ pub struct Call {
     pub args: Vec<u8>,
 }
 
-#[derive(Serialize)]
+#[derive(Serialize, Debug)]
 pub struct CallResult {
     pub success: bool,
     pub result: Option<Vec<u8>>,
@@ -78,6 +78,10 @@ impl WormholeRelayer {
         // TODO: event
     }
 
+    pub fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_owned()
+    }
+
     pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
         near_sdk::serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
     }
@@ -120,6 +124,24 @@ impl WormholeRelayer {
             .then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
     }
 
+    pub fn delivery_test(&self, data: Vec<u8>) -> Promise {
+        log!("data: {:?}", data);
+        let calls: Vec<Call> = near_sdk::serde_json::from_slice(&data).expect("Failed to deserialize Vec<Call>");
+
+        // TODO Set a limit for calls.len
+        require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
+
+        for call in calls.iter() {
+            log!("call contract_id: {}", call.contract_id);
+            log!("call method_name: {}", call.method_name);
+            log!("call args: {:?}", call.args);
+        }
+
+        Promise::new(env::current_account_id())
+            .function_call("version".to_string(), Vec::new(), NearToken::from_yoctonear(0), CALL_CALL_GAS)
+            .then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
+    }
+
     #[private]
     pub fn on_verify_complete(&self, calls: Vec<Call>) -> Vec<CallResult> {
         let mut call_results = Vec::new();
@@ -137,8 +159,8 @@ impl WormholeRelayer {
             }
 
             // TODO: what about order?
-            for i in 0..calls.len() as u64 {
-                let result = match env::promise_result(i) {
+            for _ in calls.iter() {
+                let result = match env::promise_result(0) {
                     PromiseResult::Successful(data) => CallResult {
                         success: true,
                         result: Some(data),
@@ -148,6 +170,7 @@ impl WormholeRelayer {
                         result: None,
                     },
                 };
+                log!("Result {:?}", result);
                 call_results.push(result);
             }
         } else {

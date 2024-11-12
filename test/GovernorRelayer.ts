@@ -1,6 +1,17 @@
 import {Worker, NEAR, NearAccount} from "near-workspaces";
 import anyTest, {TestFn} from "ava";
 
+interface Call {
+    contract_id: string;
+    method_name: string;
+    args: number[];
+}
+
+interface CallResult {
+    success: boolean;
+    result: number[] | null;
+}
+
 const test = anyTest as TestFn<{
     worker: Worker;
     accounts: Record<string, NearAccount>;
@@ -17,6 +28,7 @@ test.beforeEach(async t => {
         "target/wasm32-unknown-unknown/release/governor_near.wasm",
         {initialBalance: NEAR.parse("20 N").toJSON()},
     );
+
 //    // Deploy the test token contract
 //    const token = await root.devDeploy(
 //        "artifacts/test_token.wasm",
@@ -50,6 +62,13 @@ test.afterEach.always(async t => {
 test("Get payload", async t => {
     const {root, contract, deployer} = t.context.accounts;
 
+//    const fs = require("fs");
+//    const globalsFile = "test/data.json";
+//    const dataFromJSON = fs.readFileSync(globalsFile, "utf8");
+//    let parsedData = JSON.parse(dataFromJSON);
+//
+//    parsedData[0]["contract_id"] = contract.accountId;
+
     // This corresponds to Sepolia timelock address 000000000000000000000000471b3f60f08c50dd0ecba1bcd113b66fcc02b63d or 0x471b3f60f08c50dd0ecba1bcd113b66fcc02b63d
     const timelockBuffer = new Uint8Array([
         0,   0,  0,   0,   0,   0,   0,   0,   0,
@@ -65,9 +84,38 @@ test("Get payload", async t => {
         foreign_governor_address: Array.from(timelockBuffer)
     });
 
-//    // Get call bytes
-//    const attachedDeposit = "5 N";
-//    await root.call(contract, "to_bytes", {
-//        calls: vec
-//    });
+    const calls: Call[] = [
+        {
+            contract_id: contract.accountId,
+            method_name: "version",
+            args: Array.from(new Uint8Array([]))
+        },
+        {
+            contract_id: contract.accountId,
+            method_name: "version",
+            args: Array.from(new Uint8Array([]))
+        }
+    ];
+
+    // Get call bytes
+    const data = await root.call(contract, "to_bytes", {
+        calls
+    });
+
+    const res: CallResult[] = await root.call(contract, "delivery_test", {
+        data
+    }, {gas: "300 Tgas"});
+
+    // Get the result field
+    const dataOut = res[0];
+    const result = dataOut.result;
+
+    // Ensure result is not null before converting
+    if (result !== null) {
+        // Convert `result` to `Uint8Array` and then decode it
+        const strOut = new TextDecoder().decode(new Uint8Array(result));
+        console.log("Decoded string:", strOut);
+    } else {
+        console.log("Result is null (Rust's None)");
+    }
 });
