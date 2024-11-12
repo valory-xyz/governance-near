@@ -1,29 +1,13 @@
-use near_contract_standards::non_fungible_token::metadata::{
-    NFTContractMetadata, TokenMetadata, NonFungibleTokenMetadataProvider, NFT_METADATA_SPEC,
-};
-use near_contract_standards::non_fungible_token::enumeration::NonFungibleTokenEnumeration;
-use near_contract_standards::non_fungible_token::{NonFungibleToken, Token};
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::borsh::{self, BorshDeserialize};
 use near_sdk::serde::{Serialize, Deserialize};
-use near_sdk::json_types::{Base64VecU8, U128, Base58PublicKey};
-use near_sdk::serde_json::json;
-use near_sdk::collections::LazyOption;
 use near_sdk::collections::UnorderedSet;
 use near_sdk::{
-    env, near_bindgen, require, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue, StorageUsage, Gas,
-    IntoStorageKey, PromiseError, PromiseResult, NearToken, log
+    env, near, require, AccountId, Promise, PromiseOrValue, Gas, PromiseResult, NearToken, log
 };
-use near_sdk::near_bindgen;
-use near_sdk::store::{LookupMap, Vector};
 use near_sdk::ext_contract;
 
 pub mod byte_utils;
 pub mod state;
-
-use crate::byte_utils::{
-    get_string_from_32,
-    ByteUtils,
-};
 
 // Wormhole Core interface
 #[ext_contract(wormhole)]
@@ -38,23 +22,20 @@ const CALL_CALL_GAS: Gas = Gas::from_tgas(5);
 const CHAIN_ID_MAINNET: u16 = 2;
 const MAX_NUM_CALLS: usize = 10;
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(crate = "near_sdk::serde")]
+#[derive(BorshDeserialize, Serialize, Deserialize)]
 pub struct Call {
     pub contract_id: AccountId,
     pub method_name: String,
     pub args: Vec<u8>,
 }
 
-#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug, PartialEq, Clone)]
-#[serde(crate = "near_sdk::serde")]
+#[derive(Serialize)]
 pub struct CallResult {
     pub success: bool,
     pub result: Option<Vec<u8>>,
 }
 
-#[near_bindgen]
-#[derive(BorshDeserialize, BorshSerialize)]
+#[near(contract_state)]
 pub struct WormholeRelayer {
     owner: AccountId,
     wormhole_core: AccountId,
@@ -73,7 +54,7 @@ impl Default for WormholeRelayer {
     }
 }
 
-#[near_bindgen]
+#[near]
 impl WormholeRelayer {
     #[init]
     pub fn new(owner_id: AccountId, wormhole_core: AccountId, foreign_governor_address: Vec<u8>) -> Self {
@@ -113,7 +94,7 @@ impl WormholeRelayer {
         let initial_storage_usage = env::storage_usage();
         self.dups.insert(&vaa.hash);
         let storage = env::storage_usage() - initial_storage_usage;
-        self.refund_deposit_to_account(storage, 0.into(), env::predecessor_account_id(), true);
+        self.refund_deposit_to_account(storage, NearToken::from_yoctonear(0), env::predecessor_account_id(), true);
 
         if vaa.emitter_chain != CHAIN_ID_MAINNET || vaa.emitter_address != self.foreign_governor_address {
             env::panic_str("InvalidGovernorEmitter");
@@ -126,7 +107,7 @@ impl WormholeRelayer {
         require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
 
         Promise::new(self.wormhole_core.clone())
-            .function_call("verify_vaa".to_string(), vaa.into_bytes(), NearToken::from(0), VERIFY_CALL_GAS)
+            .function_call("verify_vaa".to_string(), vaa.into_bytes(), NearToken::from_yoctonear(0), VERIFY_CALL_GAS)
             .then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
     }
 
@@ -140,14 +121,15 @@ impl WormholeRelayer {
                 let promise = Promise::new(call.contract_id.clone()).function_call(
                     call.method_name.clone(),
                     call.args.clone(),
-                    NearToken::from(0),
-                    VERIFY_CALL_GAS,
+                    NearToken::from_yoctonear(0),
+                    CALL_CALL_GAS,
                 );
                 promises.push(promise);
             }
 
-            for (i, call) in calls.iter().enumerate() {
-                let result = match env::promise_result(i as u64) {
+            // TODO: what about order?
+            for i in 0..calls.len() as u64 {
+                let result = match env::promise_result(i) {
                     PromiseResult::Successful(data) => CallResult {
                         success: true,
                         result: Some(data),
@@ -178,7 +160,7 @@ impl WormholeRelayer {
             require!(required_cost <= env::account_balance());
             refund = refund.saturating_add(required_cost);
         }
-        if refund > NearToken::from(1) {
+        if refund > NearToken::from_yoctonear(1) {
             Promise::new(account_id).transfer(refund);
         }
     }
