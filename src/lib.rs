@@ -23,6 +23,7 @@ const MAX_NUM_CALLS: usize = 10;
 #[derive(BorshDeserialize, Serialize, Deserialize)]
 pub struct Call {
     pub contract_id: AccountId,
+    pub deposit: u64,
     pub method_name: String,
     pub args: Vec<u8>,
 }
@@ -88,6 +89,7 @@ impl WormholeRelayer {
         serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
     }
 
+    #[payable]
     pub fn delivery(&mut self, vaa: String) -> Promise {
         let h = hex::decode(vaa.clone()).expect("invalidVaa");
         let parsed_vaa = state::ParsedVAA::parse(&h);
@@ -102,7 +104,6 @@ impl WormholeRelayer {
         // TODO enable in production
         //self.dups.insert(&parsed_vaa.hash);
         let storage = env::storage_usage() - initial_storage_usage;
-        self.refund_deposit_to_account(storage, NearToken::from_yoctonear(0), env::predecessor_account_id(), true);
 
         if parsed_vaa.emitter_chain != self.chain_id || parsed_vaa.emitter_address != self.foreign_governor_address {
             env::panic_str("InvalidGovernorEmitter");
@@ -115,11 +116,19 @@ impl WormholeRelayer {
         // TODO Set a limit for calls.len
         require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
 
+        let attached_deposit = env::attached_deposit();
+        let mut sum_deposit = 0 as u64;
         for call in calls.iter() {
+            sum_deposit += call.deposit;
+
             log!("call contract_id: {}", call.contract_id);
+            log!("call deposit: {}", call.deposit);
             log!("call method_name: {}", call.method_name);
             log!("call args: {:?}", call.args);
         }
+        let refund = attached_deposit.saturating_sub(NearToken::from_yoctonear(sum_deposit.into()));
+
+        self.refund_deposit_to_account(storage, refund, env::predecessor_account_id(), true);
 
         let promise = Promise::new(self.wormhole_core.clone())
             .function_call(
@@ -129,10 +138,11 @@ impl WormholeRelayer {
                 VERIFY_CALL_GAS,
             );
 
-        // Передача calls и index 0, чтобы начать выполнение после верификации
+        // Pass all the calls and 0-th index of a promise
         promise.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(DELIVERY_CALL_GAS)
+                .with_attached_deposit(attached_deposit)
                 .on_complete(calls, 0),
         )
     }
@@ -147,7 +157,7 @@ impl WormholeRelayer {
                     .function_call(
                         call.method_name.clone(),
                         call.args.clone(),
-                        NearToken::from_yoctonear(0),
+                        NearToken::from_yoctonear(call.deposit.clone().into()),
                         CALL_CALL_GAS,
                     )
                     .then(

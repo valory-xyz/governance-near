@@ -110,22 +110,4 @@ impl ParsedVAA {
             hash,
         }
     }
-
-    pub fn into_bytes(&self) -> Vec<u8> {
-        let mut bytes = Vec::new();
-
-        bytes.push(self.version);
-        bytes.extend_from_slice(&self.guardian_set_index.to_be_bytes());
-        bytes.push(self.len_signers as u8);
-        
-        bytes.extend_from_slice(&self.timestamp.to_be_bytes());
-        bytes.extend_from_slice(&self.nonce.to_be_bytes());
-        bytes.extend_from_slice(&self.emitter_chain.to_be_bytes());
-        bytes.extend_from_slice(&self.emitter_address);
-        bytes.extend_from_slice(&self.sequence.to_be_bytes());
-        bytes.push(self.consistency_level);
-        bytes.extend_from_slice(&self.payload);
-
-        bytes
-    }
 }
