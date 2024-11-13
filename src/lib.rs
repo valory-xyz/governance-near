@@ -27,7 +27,7 @@ pub struct Call {
     pub args: Vec<u8>,
 }
 
-#[derive(Serialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CallResult {
     pub success: bool,
     pub result: Option<Vec<u8>>,
@@ -121,80 +121,49 @@ impl WormholeRelayer {
             log!("call args: {:?}", call.args);
         }
 
-        let mut promises = Vec::new();
         let promise = Promise::new(self.wormhole_core.clone())
             .function_call(
                 "verify_vaa".to_string(),
-                serde_json::json!({ "vaa": vaa })
-                    .to_string()
-                    .as_bytes()
-                    .to_vec(),
+                serde_json::json!({ "vaa": vaa }).to_string().as_bytes().to_vec(),
                 NearToken::from_yoctonear(0),
-                VERIFY_CALL_GAS
+                VERIFY_CALL_GAS,
             );
-        promises.push(promise);
 
-
-        for call in calls.iter() {
-            let promise = Promise::new(call.contract_id.clone()).function_call(
-                call.method_name.clone(),
-                call.args.clone(),
-                NearToken::from_yoctonear(0),
-                CALL_CALL_GAS,
-            );
-            promises.push(promise);
-        }
-
-        // Combine all promises using `Promise::and`
-        let combined_promise = promises.into_iter().reduce(Promise::and).expect("No calls to execute");
-
-        // After all promises complete, call `on_verify_complete`
-        combined_promise.then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
-    }
-
-    pub fn delivery_test(&self, data: Vec<u8>) -> Promise {
-        log!("data: {:?}", data);
-        let calls: Vec<Call> = serde_json::from_slice(&data).expect("Failed to deserialize Vec<Call>");
-
-        // TODO Set a limit for calls.len
-        require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
-
-        for call in calls.iter() {
-            log!("call contract_id: {}", call.contract_id);
-            log!("call method_name: {}", call.method_name);
-            log!("call args: {:?}", call.args);
-        }
-
-        Promise::new(env::current_account_id())
-            .function_call("version".to_string(), Vec::new(), NearToken::from_yoctonear(0), CALL_CALL_GAS)
-            .then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
+        // Передача calls и index 0, чтобы начать выполнение после верификации
+        promise.then(
+            Self::ext(env::current_account_id())
+                .with_static_gas(DELIVERY_CALL_GAS)
+                .on_complete(calls, 0),
+        )
     }
 
     #[private]
-    pub fn on_verify_complete(&self, calls: Vec<Call>) -> Vec<CallResult> {
-        let mut call_results = Vec::new();
-
+    pub fn on_complete(&self, calls: Vec<Call>, index: usize) -> PromiseOrValue<CallResult> {
+        // Check the VAA verification
         if let PromiseResult::Successful(_) = env::promise_result(0) {
-            // Check each result in the sequence of promises
-            for (i, _) in calls.iter().enumerate() {
-                let result = match env::promise_result((i + 1) as u64) {
-                    PromiseResult::Successful(data) => CallResult {
-                        success: true,
-                        result: Some(data),
-                    },
-                    _ => CallResult {
-                        success: false,
-                        result: None,
-                    },
-                };
-                log!("Result {:?}", result);
-                call_results.push(result);
+            if index < calls.len() {
+                let call = &calls[index];
+                let next_promise = Promise::new(call.contract_id.clone())
+                    .function_call(
+                        call.method_name.clone(),
+                        call.args.clone(),
+                        NearToken::from_yoctonear(0),
+                        CALL_CALL_GAS,
+                    )
+                    .then(
+                        Self::ext(env::current_account_id())
+                            .with_static_gas(DELIVERY_CALL_GAS)
+                            .on_complete(calls, index + 1)
+                    );
+                PromiseOrValue::Promise(next_promise)
+            } else {
+                // No more calls in stack, return success
+                PromiseOrValue::Value(CallResult { success: true, result: Some("Ok".into()) })
             }
         } else {
-            call_results = calls.iter().map(|_| CallResult { success: false, result: None }).collect();
+            // Return fail
+            PromiseOrValue::Value(CallResult { success: false, result: None })
         }
-
-        call_results
     }
 
     fn refund_deposit_to_account(&self, storage_used: u64, service_deposit: NearToken, account_id: AccountId, deposit_in: bool) {
