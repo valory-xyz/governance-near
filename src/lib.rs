@@ -1,58 +1,34 @@
-use near_contract_standards::non_fungible_token::metadata::{
-    NFTContractMetadata, TokenMetadata, NonFungibleTokenMetadataProvider, NFT_METADATA_SPEC,
-};
-use near_contract_standards::non_fungible_token::enumeration::NonFungibleTokenEnumeration;
-use near_contract_standards::non_fungible_token::{NonFungibleToken, Token};
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
+use near_sdk::borsh::{self, BorshDeserialize};
 use near_sdk::serde::{Serialize, Deserialize};
-use near_sdk::json_types::{Base64VecU8, U128, Base58PublicKey};
-use near_sdk::serde_json::json;
-use near_sdk::collections::LazyOption;
 use near_sdk::collections::UnorderedSet;
 use near_sdk::{
-    env, near, require, AccountId, BorshStorageKey, PanicOnDefault, Promise, PromiseOrValue, StorageUsage, Gas,
-    IntoStorageKey, PromiseError, PromiseResult, NearToken, log
+    env, near, ext_contract, require, AccountId, Promise, PromiseOrValue, Gas, PromiseResult, NearToken, log, serde_json
 };
-use near_sdk::store::{LookupMap, Vector};
-use near_sdk::ext_contract;
 
 pub mod byte_utils;
 pub mod state;
 
-use crate::byte_utils::{
-    get_string_from_32,
-    ByteUtils,
-};
-
 // Wormhole Core interface
 #[ext_contract(wormhole)]
-trait Wormhole {
+pub trait Wormhole {
     fn verify_vaa(&self, vaa: String) -> u32;
 }
-
 
 // Prepaid gas for a single (not inclusive of recursion) `verify_vaa` call.
 const VERIFY_CALL_GAS: Gas = Gas::from_tgas(20);
 const DELIVERY_CALL_GAS: Gas = Gas::from_tgas(100);
 const CALL_CALL_GAS: Gas = Gas::from_tgas(5);
-const CHAIN_ID_MAINNET: u16 = 2;
+const MAX_NUM_CALLS: usize = 10;
 
-//#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug)]
-//#[serde(crate = "near_sdk::serde")]
-//#[near(serializers=[borsh])]
-//#[derive(PartialEq, Clone)]
-#[derive(Serialize, Deserialize, PartialEq)]
-#[serde(crate = "near_sdk::serde", untagged)]
+#[derive(BorshDeserialize, Serialize, Deserialize)]
 pub struct Call {
     pub contract_id: AccountId,
+    pub deposit: u64,
     pub method_name: String,
     pub args: Vec<u8>,
 }
 
-//#[derive(BorshDeserialize, BorshSerialize, Serialize, Deserialize, Debug)]
-//#[serde(crate = "near_sdk::serde")]
-#[near(serializers=[borsh])]
-#[derive(PartialEq, Clone)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct CallResult {
     pub success: bool,
     pub result: Option<Vec<u8>>,
@@ -63,20 +39,32 @@ pub struct WormholeRelayer {
     owner: AccountId,
     wormhole_core: AccountId,
     foreign_governor_address: Vec<u8>,
-    dups: UnorderedSet<Vec<u8>>
+    chain_id: u16,
+    dups: UnorderedSet<Vec<u8>>,
 }
 
+impl Default for WormholeRelayer {
+    fn default() -> Self {
+        Self {
+            owner: "".parse().unwrap(),
+            wormhole_core: "".parse().unwrap(),
+            foreign_governor_address: Vec::new(),
+            chain_id: 0,
+            dups: UnorderedSet::new(b"d".to_vec()),
+        }
+    }
+}
 
 #[near]
 impl WormholeRelayer {
-    /// Initializes the contract owned by `owner_id` 
     #[init]
-    pub fn new(owner_id: AccountId, wormhole_core: AccountId, foreign_governor_address: Vec<u8>) -> Self {
+    pub fn new(owner_id: AccountId, wormhole_core: AccountId, foreign_governor_address: Vec<u8>, chain_id: u16) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         Self {
-            owner: env::predecessor_account_id(),
+            owner: owner_id,
             wormhole_core,
             foreign_governor_address,
+            chain_id,
             dups: UnorderedSet::new(b"d".to_vec()),
         }
     }
@@ -93,161 +81,116 @@ impl WormholeRelayer {
         // TODO: event
     }
 
-    // TODO: needs to be payable?
-    #[payable]
-    pub fn delivery(
-        &mut self,
-        vaa: String
-    ) -> Promise {
-        // TODO: Crate hex
-        let h = hex::decode(vaa).expect("invalidVaa");
-        let vaa = state::ParsedVAA::parse(&h);
+    pub fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_owned()
+    }
 
-        // Check if VAA with this hash was already accepted
-        if self.dups.contains(&vaa.hash) {
+    pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
+        serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
+    }
+
+    #[payable]
+    pub fn delivery(&mut self, vaa: String) -> Promise {
+        let h = hex::decode(vaa.clone()).expect("invalidVaa");
+        let parsed_vaa = state::ParsedVAA::parse(&h);
+
+        if self.dups.contains(&parsed_vaa.hash) {
             env::panic_str("alreadyExecuted");
         }
 
-        let initial_storage_usage = env::storage_usage();
-        self.dups.insert(&vaa.hash);
-        let storage = env::storage_usage() - initial_storage_usage;
-        self.refund_deposit_to_account(storage, 0, env::predecessor_account_id(), true);
+        log!("parsed_vaa: {:?}", parsed_vaa);
 
-        if (vaa.emitter_chain != CHAIN_ID_MAINNET) || (vaa.emitter_address != foreign_governor_address) {
+        let initial_storage_usage = env::storage_usage();
+        // TODO enable in production
+        //self.dups.insert(&parsed_vaa.hash);
+        let storage = env::storage_usage() - initial_storage_usage;
+
+        if parsed_vaa.emitter_chain != self.chain_id || parsed_vaa.emitter_address != self.foreign_governor_address {
             env::panic_str("InvalidGovernorEmitter");
         }
 
-        let data: &[u8] = &vaa.payload;
-        let num_calls = data.get_u8(0);
-        let mut calls = Vec::new();
-        let mut size_counter: usize = 1;
-        for i in 0..num_calls as usize {
-            let vec_size = data.get_u8(size_counter);
-            size_counter += 1;
-            let buf = data.get_bytes(size_counter, vec_size);
-            size_counter += vec_size;
+        let data: &[u8] = &parsed_vaa.payload;
+        log!("data: {:?}", data);
+        let calls: Vec<Call> = serde_json::from_slice(data).expect("Failed to deserialize Vec<Call>");
 
-            let mut buf_counter = 0;
-            let mut field_size = buf.get_u8(0);
-            buf_counter += 1;
-            let contract_id = buf.get_bytes(buf_counter, field_size).to_string();
-            buf_counter += field_size;
-            field_size = buf.get_u8(buf_counter);
-            buf_counter += 1;
-            let method_name = buf.get_bytes(buf_counter, field_size).to_string();
-            buf_counter += field_size;
-            let args = buf.get_bytes(buf_counter, vec_size - buf_counter).to_vec();
+        // TODO Set a limit for calls.len
+        require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
 
-            calls.push(Call(contract_id, method_name, args));
+        let attached_deposit = env::attached_deposit();
+        let mut sum_deposit = 0 as u64;
+        for call in calls.iter() {
+            sum_deposit += call.deposit;
+
+            log!("call contract_id: {}", call.contract_id);
+            log!("call deposit: {}", call.deposit);
+            log!("call method_name: {}", call.method_name);
+            log!("call args: {:?}", call.args);
         }
-        for i in 0..num_calls as usize {
-            calls[i] = data.get_u8(i + 1);
-        }
+        let refund = attached_deposit.saturating_sub(NearToken::from_yoctonear(sum_deposit.into()));
 
-        Promise::new("wormhole.near".parse().unwrap()).function_call(
-            "verify_vaa".to_string(),
-            vaa.into_bytes(),
-            0,                             // attached deposit
-            10_000_000_000_000,            // attached gas
-        )
-        .then(
+        self.refund_deposit_to_account(storage, refund, env::predecessor_account_id(), true);
+
+        let promise = Promise::new(self.wormhole_core.clone())
+            .function_call(
+                "verify_vaa".to_string(),
+                serde_json::json!({ "vaa": vaa }).to_string().as_bytes().to_vec(),
+                NearToken::from_yoctonear(0),
+                VERIFY_CALL_GAS,
+            );
+
+        // Pass all the calls and 0-th index of a promise
+        promise.then(
             Self::ext(env::current_account_id())
-                .with_static_gas(5_000_000_000_000) // gas for current
-                .on_verify_complete(calls),
+                .with_static_gas(DELIVERY_CALL_GAS)
+                .with_attached_deposit(attached_deposit)
+                .on_complete(calls, 0),
         )
     }
 
     #[private]
-    pub fn on_verify_complete(&self, calls: Vec<Call>) -> Vec<CallResult> {
-        let mut results = Vec::new();
-
-        // if Verify pass
+    pub fn on_complete(&self, calls: Vec<Call>, index: usize) -> PromiseOrValue<CallResult> {
+        // Check the VAA verification
         if let PromiseResult::Successful(_) = env::promise_result(0) {
-            // Если да, выполняем все вызовы из списка calls
-            for (i, call) in calls.iter().enumerate() {
-                let promise = Promise::new(call.contract_id.clone()).function_call(
-                    call.method_name.clone(),
-                    call.args.clone(),
-                    0,                            // attached deposit
-                    10_000_000_000_000,           // attached gas
-                );
-                env::promise_return(i as u64);
-            }
-
-            // Get results
-            for i in 0..calls.len() {
-                let result = match env::promise_result(i as u64) {
-                    PromiseResult::Successful(data) => CallResult {
-                        success: true,
-                        result: Some(data),
-                    },
-                    _ => CallResult {
-                        success: false,
-                        result: None,
-                    },
-                };
-                results.push(result);
+            if index < calls.len() {
+                let call = &calls[index];
+                let next_promise = Promise::new(call.contract_id.clone())
+                    .function_call(
+                        call.method_name.clone(),
+                        call.args.clone(),
+                        NearToken::from_yoctonear(call.deposit.clone().into()),
+                        CALL_CALL_GAS,
+                    )
+                    .then(
+                        Self::ext(env::current_account_id())
+                            .with_static_gas(DELIVERY_CALL_GAS)
+                            .on_complete(calls, index + 1)
+                    );
+                PromiseOrValue::Promise(next_promise)
+            } else {
+                // No more calls in stack, return success
+                PromiseOrValue::Value(CallResult { success: true, result: Some("Ok".into()) })
             }
         } else {
-            // Verify failed
-            for _ in calls.iter() {
-                results.push(CallResult {
-                    success: false,
-                    result: None,
-                });
-            }
+            // Return fail
+            PromiseOrValue::Value(CallResult { success: false, result: None })
         }
-
-        results
     }
 
-    fn refund_deposit_to_account(&self, storage_used: u64, service_deposit: u128, account_id: AccountId, deposit_in: bool) {
-        log!("storage used: {}", storage_used);
-        let near_deposit = NearToken::from_yoctonear(service_deposit);
+    fn refund_deposit_to_account(&self, storage_used: u64, service_deposit: NearToken, account_id: AccountId, deposit_in: bool) {
         let mut required_cost = env::storage_byte_cost().saturating_mul(storage_used.into());
-        required_cost = required_cost.saturating_add(near_deposit);
+        required_cost = required_cost.saturating_add(service_deposit);
 
-        let mut refund = env::attached_deposit();
-        // Deposit is added on a balance
+        let mut refund = env::attached_deposit().into();
         if deposit_in {
-            // Required cost must not be bigger than the attached deposit
             require!(required_cost <= refund);
             refund = refund.saturating_sub(required_cost);
         } else {
-            // This could be the case if the storage price went up during the lifespan of the service
             require!(required_cost <= env::account_balance());
             refund = refund.saturating_add(required_cost);
         }
-        //log!("required cost: {}", required_cost.as_yoctonear());
-        log!("refund: {}", refund.as_yoctonear());
-        log!("balance: {}", env::account_balance().as_yoctonear());
-        if refund.as_yoctonear() > 1 {
+        if refund > NearToken::from_yoctonear(1) {
             Promise::new(account_id).transfer(refund);
         }
     }
-
-    pub fn version(&self) -> String {
-        env!("CARGO_PKG_VERSION").to_owned()
-    }
 }
-
-// impl Default for AccountId {
-//     fn default() -> Self {
-//         Self {
-//             account_id: "aaa";
-//         }
-//     }
-// }
-//
-impl Default for WormholeRelayer {
-    fn default() -> Self {
-        Self {
-            owner: "".parse().unwrap(),
-            wormhole_core: "".parse().unwrap(),
-            foreign_governor_address: Vec::new(),
-            dups: UnorderedSet::new(b"d".to_vec()),
-        }
-    }
-}
-
 
