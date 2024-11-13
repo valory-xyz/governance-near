@@ -121,7 +121,8 @@ impl WormholeRelayer {
             log!("call args: {:?}", call.args);
         }
 
-        Promise::new(self.wormhole_core.clone())
+        let mut promises = Vec::new();
+        let promise = Promise::new(self.wormhole_core.clone())
             .function_call(
                 "verify_vaa".to_string(),
                 serde_json::json!({ "vaa": vaa })
@@ -130,8 +131,25 @@ impl WormholeRelayer {
                     .to_vec(),
                 NearToken::from_yoctonear(0),
                 VERIFY_CALL_GAS
-            )
-            .then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
+            );
+        promises.push(promise);
+
+
+        for call in calls.iter() {
+            let promise = Promise::new(call.contract_id.clone()).function_call(
+                call.method_name.clone(),
+                call.args.clone(),
+                NearToken::from_yoctonear(0),
+                CALL_CALL_GAS,
+            );
+            promises.push(promise);
+        }
+
+        // Combine all promises using `Promise::and`
+        let combined_promise = promises.into_iter().reduce(Promise::and).expect("No calls to execute");
+
+        // After all promises complete, call `on_verify_complete`
+        combined_promise.then(Self::ext(env::current_account_id()).with_static_gas(DELIVERY_CALL_GAS).on_verify_complete(calls))
     }
 
     pub fn delivery_test(&self, data: Vec<u8>) -> Promise {
@@ -155,22 +173,11 @@ impl WormholeRelayer {
     #[private]
     pub fn on_verify_complete(&self, calls: Vec<Call>) -> Vec<CallResult> {
         let mut call_results = Vec::new();
-        let mut promises = Vec::new();
 
         if let PromiseResult::Successful(_) = env::promise_result(0) {
-            for call in calls.iter() {
-                let promise = Promise::new(call.contract_id.clone()).function_call(
-                    call.method_name.clone(),
-                    call.args.clone(),
-                    NearToken::from_yoctonear(0),
-                    CALL_CALL_GAS,
-                );
-                promises.push(promise);
-            }
-
-            // TODO: what about order?
-            for i in 0..calls.iter() {
-                let result = match env::promise_result(0) {
+            // Check each result in the sequence of promises
+            for (i, _) in calls.iter().enumerate() {
+                let result = match env::promise_result((i + 1) as u64) {
                     PromiseResult::Successful(data) => CallResult {
                         success: true,
                         result: Some(data),
