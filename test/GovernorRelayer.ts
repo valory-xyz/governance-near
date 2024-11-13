@@ -81,7 +81,8 @@ test("Get payload", async t => {
     await root.call(contract, "new", {
         owner_id: deployer,
         wormhole_core: deployer,
-        foreign_governor_address: Array.from(timelockBuffer)
+        foreign_governor_address: Array.from(timelockBuffer),
+        chain_id: 100
     });
 
     const calls: Call[] = [
