@@ -15,15 +15,17 @@ pub trait Wormhole {
 }
 
 // Prepaid gas for a single (not inclusive of recursion) `verify_vaa` call.
-const VERIFY_CALL_GAS: Gas = Gas::from_tgas(20);
-const DELIVERY_CALL_GAS: Gas = Gas::from_tgas(100);
-const CALL_CALL_GAS: Gas = Gas::from_tgas(5);
+const COMPLETE_CALL_GAS_NUM: u64 = 5;
+const VERIFY_CALL_GAS_NUM: u64 = 20;
+const VERIFY_CALL_GAS: Gas = Gas::from_tgas(VERIFY_CALL_GAS_NUM);
+const COMPLETE_CALL_GAS: Gas = Gas::from_tgas(COMPLETE_CALL_GAS_NUM);
 const MAX_NUM_CALLS: usize = 10;
 
 #[derive(BorshDeserialize, Serialize, Deserialize)]
 pub struct Call {
     pub contract_id: AccountId,
     pub deposit: NearToken,
+    pub gas: u64, // max 300 tgas
     pub method_name: String,
     pub args: Vec<u8>,
 }
@@ -41,6 +43,7 @@ pub struct WormholeRelayer {
     foreign_governor_address: Vec<u8>,
     chain_id: u16,
     dups: UnorderedSet<Vec<u8>>,
+    upgrade_hash: Vec<u8>,
 }
 
 impl Default for WormholeRelayer {
@@ -51,6 +54,7 @@ impl Default for WormholeRelayer {
             foreign_governor_address: Vec::new(),
             chain_id: 0,
             dups: UnorderedSet::new(b"d".to_vec()),
+            upgrade_hash: Vec::new()
         }
     }
 }
@@ -58,7 +62,12 @@ impl Default for WormholeRelayer {
 #[near]
 impl WormholeRelayer {
     #[init]
-    pub fn new(owner_id: AccountId, wormhole_core: AccountId, foreign_governor_address: Vec<u8>, chain_id: u16) -> Self {
+    pub fn new(
+        owner_id: AccountId,
+        wormhole_core: AccountId,
+        foreign_governor_address: Vec<u8>,
+        chain_id: u16
+    ) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         Self {
             owner: owner_id,
@@ -66,6 +75,7 @@ impl WormholeRelayer {
             foreign_governor_address,
             chain_id,
             dups: UnorderedSet::new(b"d".to_vec()),
+            upgrade_hash: b"h".to_vec()
         }
     }
 
@@ -104,14 +114,19 @@ impl WormholeRelayer {
         require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
 
         let mut sum_deposit = NearToken::from_yoctonear(0);
+        let mut sum_gas = 0;
         for call in calls.iter() {
             sum_deposit = sum_deposit.saturating_add(call.deposit);
-
+            sum_gas = sum_gas + call.gas + COMPLETE_CALL_GAS_NUM;
             log!("call contract_id: {}", call.contract_id);
             log!("call deposit: {}", call.deposit);
             log!("call method_name: {}", call.method_name);
             log!("call args: {:?}", call.args);
+            log!("call gas: {:?}", call.gas);
         }
+        sum_gas = sum_gas + VERIFY_CALL_GAS_NUM + COMPLETE_CALL_GAS_NUM;
+        require!(env::prepaid_gas() > Gas::from_tgas(sum_gas), "Exceeded max gas");
+
 
         self.refund_deposit_to_account(storage, sum_deposit, env::predecessor_account_id(), true);
 
@@ -120,13 +135,13 @@ impl WormholeRelayer {
                 "verify_vaa".to_string(),
                 serde_json::json!({ "vaa": vaa }).to_string().as_bytes().to_vec(),
                 NearToken::from_yoctonear(0),
-                VERIFY_CALL_GAS,
+                VERIFY_CALL_GAS
             );
 
         // Pass all the calls and 0-th index of a promise
         promise.then(
             Self::ext(env::current_account_id())
-                .with_static_gas(DELIVERY_CALL_GAS)
+                .with_static_gas(Gas::from_tgas(sum_gas))
                 .with_attached_deposit(sum_deposit)
                 .on_complete(calls, 0),
         )
@@ -167,11 +182,11 @@ impl WormholeRelayer {
                         call.method_name.clone(),
                         call.args.clone(),
                         call.deposit.clone(),
-                        CALL_CALL_GAS,
+                        Gas::from_tgas(call.gas.clone()),
                     )
                     .then(
                         Self::ext(env::current_account_id())
-                            .with_static_gas(DELIVERY_CALL_GAS)
+                            .with_static_gas(COMPLETE_CALL_GAS)
                             .on_complete(calls, index + 1)
                     );
                 PromiseOrValue::Promise(next_promise)
@@ -188,7 +203,7 @@ impl WormholeRelayer {
     #[private]
     pub fn change_foreign_governor_address(&mut self, new_foreign_governor_address: Vec<u8>) {
         // Check account validity
-        require!(env::is_valid_account_id(&new_foreign_governor_address));
+        require!(env::is_valid_account_id(&new_foreign_governor_address), "Account Id is invalid");
 
         self.foreign_governor_address = new_foreign_governor_address;
 
@@ -202,15 +217,56 @@ impl WormholeRelayer {
 
         let mut refund = env::attached_deposit().into();
         if deposit_in {
-            require!(required_cost <= refund);
+            require!(required_cost <= refund, "Insufficient required cost");
             refund = refund.saturating_sub(required_cost);
         } else {
-            require!(required_cost <= env::account_balance());
+            require!(required_cost <= env::account_balance(), "Insufficient required cost");
             refund = refund.saturating_add(required_cost);
         }
         if refund > NearToken::from_yoctonear(1) {
             Promise::new(account_id).transfer(refund);
         }
     }
+
+    #[private]
+    pub fn update_contract_hash(&mut self, hash: Vec<u8>) {
+        env::log_str(&format!(
+            "wormhole/{}#{}: update_contract_hash: {}",
+            file!(),
+            line!(),
+            hex::encode(&hash)
+        ));
+        
+        self.upgrade_hash = hash;
+    }
+
+    #[private]
+    pub fn update_contract_work(&mut self, v: Vec<u8>) -> Promise {
+        let s = env::sha256(&v);
+
+        env::log_str(&format!(
+            "wormhole/{}#{}: update_contract_work: {}",
+            file!(),
+            line!(),
+            hex::encode(&s)
+        ));
+
+        if s.to_vec() != self.upgrade_hash {
+            env::panic_str("invalidUpgradeContract");
+        }
+
+        let storage = (v.len() + 32) as u64;
+        self.refund_deposit_to_account(storage, NearToken::from_yoctonear(0), env::predecessor_account_id(), true);
+
+        Promise::new(env::current_account_id())
+            .deploy_contract(v.to_vec())
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn update_contract() {
+    env::setup_panic_hook();
+    let mut contract: WormholeRelayer = env::state_read().expect("Contract is not initialized");
+    contract.update_contract_work(env::input().expect("Input cannot be processed"));
 }
 
