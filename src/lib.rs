@@ -1,6 +1,6 @@
 use near_sdk::borsh::{self, BorshDeserialize};
 use near_sdk::serde::{Serialize, Deserialize};
-use near_sdk::collections::UnorderedSet;
+use near_sdk::store::iterable_set::IterableSet;
 use near_sdk::{
     env, near, ext_contract, require, AccountId, Promise, PromiseOrValue, Gas, PromiseResult, NearToken, log, serde_json
 };
@@ -42,7 +42,7 @@ pub struct WormholeRelayer {
     wormhole_core: AccountId,
     foreign_governor_address: Vec<u8>,
     chain_id: u16,
-    dups: UnorderedSet<Vec<u8>>,
+    dups: IterableSet<Vec<u8>>,
     upgrade_hash: Vec<u8>,
 }
 
@@ -53,7 +53,7 @@ impl Default for WormholeRelayer {
             wormhole_core: "".parse().unwrap(),
             foreign_governor_address: Vec::new(),
             chain_id: 0,
-            dups: UnorderedSet::new(b"d".to_vec()),
+            dups: IterableSet::new(b"d".to_vec()),
             upgrade_hash: Vec::new()
         }
     }
@@ -74,7 +74,7 @@ impl WormholeRelayer {
             wormhole_core,
             foreign_governor_address,
             chain_id,
-            dups: UnorderedSet::new(b"d".to_vec()),
+            dups: IterableSet::new(b"d".to_vec()),
             upgrade_hash: b"h".to_vec()
         }
     }
@@ -83,23 +83,12 @@ impl WormholeRelayer {
         env!("CARGO_PKG_VERSION").to_owned()
     }
 
-    pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
-        serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
+    pub fn get_storage_usage(&self) -> u64 {
+        env::storage_usage()
     }
 
-    #[payable]
-    pub fn test_payable(&mut self, deposit: NearToken, account_id: AccountId) {
-        env::log_str(&format!(
-            "governance/{}#{}",
-            file!(),
-            line!(),
-        ));
-
-        log!("deposit: {}", deposit);
-
-        if deposit > NearToken::from_yoctonear(1) {
-            Promise::new(account_id).transfer(deposit);
-        }
+    pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
+        serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
     }
 
     #[payable]
@@ -153,13 +142,14 @@ impl WormholeRelayer {
         let parsed_vaa = state::ParsedVAA::parse(&h);
 
         if self.dups.contains(&parsed_vaa.hash) {
-            env::panic_str("alreadyExecuted");
+            env::panic_str("AlreadyExecuted");
         }
 
         log!("parsed_vaa: {:?}", parsed_vaa);
 
-        // TODO enable in production
-        //self.dups.insert(&parsed_vaa.hash);
+        // Record processed vaa
+        self.dups.insert(parsed_vaa.hash);
+        self.dups.flush();
 
         if parsed_vaa.emitter_chain != self.chain_id || parsed_vaa.emitter_address != self.foreign_governor_address {
             env::panic_str("InvalidGovernorEmitter");
