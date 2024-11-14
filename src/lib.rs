@@ -116,19 +116,17 @@ impl WormholeRelayer {
         // TODO Set a limit for calls.len
         require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
 
-        let attached_deposit = env::attached_deposit();
-        let mut sum_deposit = 0 as u64;
+        let mut sum_deposit = NearToken::from_yoctonear(0);
         for call in calls.iter() {
-            sum_deposit += call.deposit;
+            sum_deposit = sum_deposit.saturating_add(NearToken::from_yoctonear(call.deposit.into()));
 
             log!("call contract_id: {}", call.contract_id);
             log!("call deposit: {}", call.deposit);
             log!("call method_name: {}", call.method_name);
             log!("call args: {:?}", call.args);
         }
-        let refund = attached_deposit.saturating_sub(NearToken::from_yoctonear(sum_deposit.into()));
 
-        self.refund_deposit_to_account(storage, refund, env::predecessor_account_id(), true);
+        self.refund_deposit_to_account(storage, sum_deposit, env::predecessor_account_id(), true);
 
         let promise = Promise::new(self.wormhole_core.clone())
             .function_call(
@@ -142,7 +140,7 @@ impl WormholeRelayer {
         promise.then(
             Self::ext(env::current_account_id())
                 .with_static_gas(DELIVERY_CALL_GAS)
-                .with_attached_deposit(attached_deposit)
+                .with_attached_deposit(sum_deposit)
                 .on_complete(calls, 0),
         )
     }
@@ -176,9 +174,9 @@ impl WormholeRelayer {
         }
     }
 
-    fn refund_deposit_to_account(&self, storage_used: u64, service_deposit: NearToken, account_id: AccountId, deposit_in: bool) {
+    fn refund_deposit_to_account(&self, storage_used: u64, deposit: NearToken, account_id: AccountId, deposit_in: bool) {
         let mut required_cost = env::storage_byte_cost().saturating_mul(storage_used.into());
-        required_cost = required_cost.saturating_add(service_deposit);
+        required_cost = required_cost.saturating_add(deposit);
 
         let mut refund = env::attached_deposit().into();
         if deposit_in {
