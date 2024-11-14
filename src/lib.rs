@@ -69,31 +69,6 @@ impl WormholeRelayer {
         }
     }
 
-    pub fn change_owner(&mut self, new_owner: AccountId) {
-        // Check the ownership
-        require!(self.owner == env::predecessor_account_id());
-
-        // Check account validity
-        require!(env::is_valid_account_id(new_owner.as_bytes()));
-
-        self.owner = new_owner;
-
-        // TODO: event
-    }
-
-    #[private]
-    fn change_foreign_governor_address(&mut self, new_foreign_governor_address: AccountId) {
-        // Check the ownership
-        require!(env::current_account_id() == env::predecessor_account_id());
-
-        // Check account validity
-        require!(env::is_valid_account_id(new_owner.as_bytes()));
-
-        self.foreign_governor_address = new_foreign_governor_address;
-
-        // TODO: event
-    }
-
     pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_owned()
     }
@@ -119,27 +94,11 @@ impl WormholeRelayer {
 
     #[payable]
     pub fn delivery(&mut self, vaa: String) -> Promise {
-        let h = hex::decode(vaa.clone()).expect("invalidVaa");
-        let parsed_vaa = state::ParsedVAA::parse(&h);
-
-        if self.dups.contains(&parsed_vaa.hash) {
-            env::panic_str("alreadyExecuted");
-        }
-
-        log!("parsed_vaa: {:?}", parsed_vaa);
-
         let initial_storage_usage = env::storage_usage();
-        // TODO enable in production
-        //self.dups.insert(&parsed_vaa.hash);
+
+        let calls = self.process_vaa(vaa.clone());
+
         let storage = env::storage_usage() - initial_storage_usage;
-
-        if parsed_vaa.emitter_chain != self.chain_id || parsed_vaa.emitter_address != self.foreign_governor_address {
-            env::panic_str("InvalidGovernorEmitter");
-        }
-
-        let data: &[u8] = &parsed_vaa.payload;
-        log!("data: {:?}", data);
-        let calls: Vec<Call> = serde_json::from_slice(data).expect("Failed to deserialize Vec<Call>");
 
         // TODO Set a limit for calls.len
         require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
@@ -174,6 +133,30 @@ impl WormholeRelayer {
     }
 
     #[private]
+    pub fn process_vaa(&mut self, vaa: String) -> Vec<Call> {
+        let h = hex::decode(vaa.clone()).expect("invalidVaa");
+        let parsed_vaa = state::ParsedVAA::parse(&h);
+
+        if self.dups.contains(&parsed_vaa.hash) {
+            env::panic_str("alreadyExecuted");
+        }
+
+        log!("parsed_vaa: {:?}", parsed_vaa);
+
+        // TODO enable in production
+        //self.dups.insert(&parsed_vaa.hash);
+
+        if parsed_vaa.emitter_chain != self.chain_id || parsed_vaa.emitter_address != self.foreign_governor_address {
+            env::panic_str("InvalidGovernorEmitter");
+        }
+
+        let data = &parsed_vaa.payload;
+        log!("data: {:?}", data);
+        let calls: Vec<Call> = serde_json::from_slice(data).expect("Failed to deserialize Vec<Call>");
+        calls
+    }
+
+    #[private]
     pub fn on_complete(&self, calls: Vec<Call>, index: usize) -> PromiseOrValue<CallResult> {
         // Check the VAA verification
         if let PromiseResult::Successful(_) = env::promise_result(0) {
@@ -202,7 +185,18 @@ impl WormholeRelayer {
         }
     }
 
-    fn refund_deposit_to_account(&self, storage_used: u64, deposit: NearToken, account_id: AccountId, deposit_in: bool) {
+    #[private]
+    pub fn change_foreign_governor_address(&mut self, new_foreign_governor_address: Vec<u8>) {
+        // Check account validity
+        require!(env::is_valid_account_id(&new_foreign_governor_address));
+
+        self.foreign_governor_address = new_foreign_governor_address;
+
+        // TODO: event
+    }
+
+    #[private]
+    pub fn refund_deposit_to_account(&self, storage_used: u64, deposit: NearToken, account_id: AccountId, deposit_in: bool) {
         let mut required_cost = env::storage_byte_cost().saturating_mul(storage_used.into());
         required_cost = required_cost.saturating_add(deposit);
 
