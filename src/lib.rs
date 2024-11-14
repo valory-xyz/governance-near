@@ -15,15 +15,19 @@ pub trait Wormhole {
 }
 
 // Prepaid gas for a single (not inclusive of recursion) `verify_vaa` call.
-const VERIFY_CALL_GAS: Gas = Gas::from_tgas(20);
-const DELIVERY_CALL_GAS: Gas = Gas::from_tgas(100);
-const CALL_CALL_GAS: Gas = Gas::from_tgas(5);
+const COMPLETE_CALL_GAS_NUM: u64 = 20;
+const VERYFY_CALL_GAS_NUM: u64 = 20;
+const DELIVERY_CALL_GAS_NUM: u64 = 20;
+const VERIFY_CALL_GAS: Gas = Gas::from_tgas(COMPLETE_CALL_GAS_NUM);
+const DELIVERY_CALL_GAS: Gas = Gas::from_tgas(DELIVERY_CALL_GAS_NUM);
+const COMPLETE_CALL_GAS: Gas = Gas::from_tgas(VERYFY_CALL_GAS_NUM);
 const MAX_NUM_CALLS: usize = 10;
 
 #[derive(BorshDeserialize, Serialize, Deserialize)]
 pub struct Call {
     pub contract_id: AccountId,
     pub deposit: NearToken,
+    pub gas: u64, // max 300 tgas
     pub method_name: String,
     pub args: Vec<u8>,
 }
@@ -104,14 +108,18 @@ impl WormholeRelayer {
         require!(calls.len() <= MAX_NUM_CALLS, "Exceeded max number of calls");
 
         let mut sum_deposit = NearToken::from_yoctonear(0);
+        let mut sum_gas = 0;
         for call in calls.iter() {
             sum_deposit = sum_deposit.saturating_add(call.deposit);
-
+            sum_gas = sum_gas + call.gas + COMPLETE_CALL_GAS_NUM;
             log!("call contract_id: {}", call.contract_id);
             log!("call deposit: {}", call.deposit);
             log!("call method_name: {}", call.method_name);
             log!("call args: {:?}", call.args);
+            log!("call args: {:?}", call.gas);
         }
+        sum_gas = sum_gas + VERYFY_CALL_GAS_NUM + COMPLETE_CALL_GAS_NUM;
+        require!(env::prepaid_gas() > Gas::from_tgas(sum_gas), "Exceeded max gas");
 
         self.refund_deposit_to_account(storage, sum_deposit, env::predecessor_account_id(), true);
 
@@ -126,7 +134,7 @@ impl WormholeRelayer {
         // Pass all the calls and 0-th index of a promise
         promise.then(
             Self::ext(env::current_account_id())
-                .with_static_gas(DELIVERY_CALL_GAS)
+                .with_static_gas(Gas::from_tgas(sum_gas))
                 .with_attached_deposit(sum_deposit)
                 .on_complete(calls, 0),
         )
@@ -167,11 +175,11 @@ impl WormholeRelayer {
                         call.method_name.clone(),
                         call.args.clone(),
                         call.deposit.clone(),
-                        CALL_CALL_GAS,
+                        Gas::from_tgas(call.gas.clone()),
                     )
                     .then(
                         Self::ext(env::current_account_id())
-                            .with_static_gas(DELIVERY_CALL_GAS)
+                            .with_static_gas(Gas::from_tgas(COMPLETE_CALL_GAS_NUM))
                             .on_complete(calls, index + 1)
                     );
                 PromiseOrValue::Promise(next_promise)
