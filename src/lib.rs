@@ -23,7 +23,7 @@ const MAX_NUM_CALLS: usize = 10;
 #[derive(BorshDeserialize, Serialize, Deserialize)]
 pub struct Call {
     pub contract_id: AccountId,
-    pub deposit: u64,
+    pub deposit: NearToken,
     pub method_name: String,
     pub args: Vec<u8>,
 }
@@ -81,12 +81,40 @@ impl WormholeRelayer {
         // TODO: event
     }
 
+    #[private]
+    fn change_foreign_governor_address(&mut self, new_foreign_governor_address: AccountId) {
+        // Check the ownership
+        require!(env::current_account_id() == env::predecessor_account_id());
+
+        // Check account validity
+        require!(env::is_valid_account_id(new_owner.as_bytes()));
+
+        self.foreign_governor_address = new_foreign_governor_address;
+
+        // TODO: event
+    }
+
     pub fn version(&self) -> String {
         env!("CARGO_PKG_VERSION").to_owned()
     }
 
     pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
         serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
+    }
+
+    #[payable]
+    pub fn test_payable(&mut self, deposit: NearToken, account_id: AccountId) {
+        env::log_str(&format!(
+            "governance/{}#{}",
+            file!(),
+            line!(),
+        ));
+
+        log!("deposit: {}", deposit);
+
+        if deposit > NearToken::from_yoctonear(1) {
+            Promise::new(account_id).transfer(deposit);
+        }
     }
 
     #[payable]
@@ -118,7 +146,7 @@ impl WormholeRelayer {
 
         let mut sum_deposit = NearToken::from_yoctonear(0);
         for call in calls.iter() {
-            sum_deposit = sum_deposit.saturating_add(NearToken::from_yoctonear(call.deposit.into()));
+            sum_deposit = sum_deposit.saturating_add(call.deposit);
 
             log!("call contract_id: {}", call.contract_id);
             log!("call deposit: {}", call.deposit);
@@ -155,7 +183,7 @@ impl WormholeRelayer {
                     .function_call(
                         call.method_name.clone(),
                         call.args.clone(),
-                        NearToken::from_yoctonear(call.deposit.clone().into()),
+                        call.deposit.clone(),
                         CALL_CALL_GAS,
                     )
                     .then(
