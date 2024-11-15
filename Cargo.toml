@@ -23,3 +23,4 @@ borsh = "0.9.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 hex = "0.4"  # for hex decoding
+sha2 = "0.10.8"

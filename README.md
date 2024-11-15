@@ -73,7 +73,14 @@ near-sandbox --home /tmp/near-sandbox run
 
 Deploy the contract in the testnet:
 ```bash
-    near deploy contract_000.sub_olas.olas_000.testnet target/wasm32-unknown-unknown/release/governor_near.wasm --initFunction new_default_meta --initArgs '{"owner_id":"sub_olas.olas_000.testnet", "multisig_factory": "multisignature2.testnet"}' --networkId testnet
+    UPDATE: near deploy contract_000.sub_olas.olas_000.testnet target/wasm32-unknown-unknown/release/governor_near.wasm --initFunction new_default_meta --initArgs '{"owner_id":"sub_olas.olas_000.testnet", "multisig_factory": "multisignature2.testnet"}' --networkId testnet
+```
+
+```
+xxd -p artifacts/governor_near.wasm > out.txt
+tr -d '\n' < out.txt > out2.txt
+near view gov_000.sub_olas.olas_000.testnet get_update_contract_hash "{\"data\": \"'$(cat out2.txt)'\"}" --network-id testnet &> out3.txt
+near call gov_000.sub_olas.olas_000.testnet update_contract "{\"data\": \"'$(cat out2.txt)'\"}" --useAccount sub_olas.olas_000.testnet --gas 300000000000000 --deposit 6 --network-id testnet &> out.txt
 ```
 
 ### Testnet
