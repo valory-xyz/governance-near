@@ -266,6 +266,7 @@ impl WormholeMessenger {
 //             env::sha256(&v)
 //         ));
         log!("Hash: {:?}", env::sha256(&v));
+        log!("bytes hash: {:?}", env::sha256(include_bytes!("../governor_near.wasm")));
         env::sha256(&v)
     }
 }
@@ -296,7 +297,7 @@ pub extern "C" fn get_update_contract_hash() {
 //     // Return the Hexadecimal checksum as printable data
 //     env::value_return(checksum_hex.as_bytes());
 
-    //env::value_return(hex::encode(&result).as_slice());
+    env::value_return(hex::encode(&result).as_bytes());
     //hex::encode(result)
 }
 

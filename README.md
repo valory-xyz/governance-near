@@ -5,7 +5,7 @@ Set of Autonolas registries contracts on NEAR.
 The program requires that the following environment is satisfied:
 ```
 rustc --version
-rustc 1.79.0 (129f3b996 2024-06-10)
+rustc 1.81.0 (eeb90cda1 2024-09-04)
 ```
 
 Advise the script `setup-env.sh` to correctly install the required environment.
@@ -79,8 +79,8 @@ Deploy the contract in the testnet:
 ```
 xxd -p artifacts/governor_near.wasm > out.txt
 tr -d '\n' < out.txt > out2.txt
-near view gov_000.sub_olas.olas_000.testnet get_update_contract_hash "{\"data\": \"'$(cat out2.txt)'\"}" --network-id testnet &> out3.txt
-near call gov_000.sub_olas.olas_000.testnet update_contract "{\"data\": \"'$(cat out2.txt)'\"}" --useAccount sub_olas.olas_000.testnet --gas 300000000000000 --deposit 6 --network-id testnet &> out.txt
+near view gov_001.sub_olas.olas_000.testnet get_update_contract_hash "{\"data\": \"'$(cat out2.txt)'\"}" --network-id testnet &> out3.txt
+near call gov_001.sub_olas.olas_000.testnet update_contract "{\"data\": \"'$(cat out2.txt)'\"}" --useAccount sub_olas.olas_000.testnet --gas 300000000000000 --deposit 6 --network-id testnet &> out.txt
 ```
 
 ### Testnet
