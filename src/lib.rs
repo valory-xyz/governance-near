@@ -22,9 +22,6 @@ const VERIFY_CALL_GAS: Gas = Gas::from_tgas(VERIFY_CALL_GAS_NUM);
 const COMPLETE_CALL_GAS: Gas = Gas::from_tgas(COMPLETE_CALL_GAS_NUM);
 const MAX_NUM_CALLS: usize = 10;
 
-const NO_ARGS: Vec<u8> = vec![];
-const CALL_GAS: Gas = Gas::from_tgas(200); // 200 TGAS
-
 #[derive(BorshDeserialize, Serialize, Deserialize)]
 pub struct Call {
     pub contract_id: AccountId,
