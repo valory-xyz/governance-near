@@ -96,6 +96,30 @@ impl WormholeMessenger {
         serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
     }
 
+	pub fn update_contract_work(&self) {
+        // Receive the code directly from the input to avoid the
+        // GAS overhead of deserializing parameters
+        let code = env::input().expect("Error: No input").to_vec();
+
+        let hash = env::sha256(&code);
+
+        // Check the caller is authorized to update the code
+        //if hash != self.upgrade_hash {
+        //    env::panic_str("invalidUpgradeContract");
+        //}
+
+        env::log_str(&format!(
+            "WormholeMessenger/{}#{}: : {}",
+            file!(),
+            line!(),
+            hex::encode(&hash)
+        ));
+
+        // Deploy the contract on self
+        Promise::new(env::current_account_id())
+            .deploy_contract(code);
+    }
+
     #[payable]
     pub fn delivery(&mut self, vaa: String) -> Promise {
         let initial_storage_usage = env::storage_usage();
@@ -222,82 +246,7 @@ impl WormholeMessenger {
             Promise::new(account_id).transfer(refund);
         }
     }
-
-    #[private]
-    pub fn update_contract_hash(&mut self, hash: Vec<u8>) {
-        env::log_str(&format!(
-            "wormhole/{}#{}: update_contract_hash: {}",
-            file!(),
-            line!(),
-            hex::encode(&hash)
-        ));
-        
-        self.upgrade_hash = hash;
-    }
-
-    #[private]
-    pub fn update_contract_work(&mut self, v: Vec<u8>) -> Promise {
-        let s = env::sha256(&v);
-
-        env::log_str(&format!(
-            "wormhole/{}#{}: update_contract_work: {}",
-            file!(),
-            line!(),
-            hex::encode(&s)
-        ));
-
-//         if s.to_vec() != self.upgrade_hash {
-//             env::panic_str("invalidUpgradeContract");
-//         }
-
-        //let storage = (v.len() + 32) as u64;
-        //self.refund_deposit_to_account(storage, NearToken::from_yoctonear(0), env::predecessor_account_id(), true);
-
-        Promise::new(env::current_account_id())
-            .deploy_contract(v.to_vec())
-    }
-
-    #[private]
-    pub fn get_contract_hash(&self, v: Vec<u8>) -> Vec<u8> {
-//         env::log_str(&format!(
-//             "wormhole_messenger/{}#{}: get_contract_hash: {:?}",
-//             file!(),
-//             line!(),
-//             env::sha256(&v)
-//         ));
-        log!("Hash: {:?}", env::sha256(&v));
-        log!("bytes hash: {:?}", env::sha256(include_bytes!("../governor_near.wasm")));
-        env::sha256(&v)
-    }
 }
 
-#[no_mangle]
-pub extern "C" fn update_contract() {
-    env::setup_panic_hook();
-    let mut contract: WormholeMessenger = env::state_read().expect("Contract is not initialized");
-    contract.update_contract_work(env::input().expect("Input cannot be processed"));
-}
 
-#[no_mangle]
-pub extern "C" fn get_update_contract_hash() {
-    env::setup_panic_hook();
-    let contract: WormholeMessenger = env::state_read().expect("Contract is not initialized");
-    let contract_bytes = env::input().expect("Input cannot be processed");
-    //log!("Bytes len: {:?}", contract_bytes);
-    let result = contract.get_contract_hash(contract_bytes);
-
-//     // Compute the SHA-256 checksum of the result
-//     let mut hasher = Sha256::new();
-//     hasher.update(&result);
-//     let checksum = hasher.finalize(); // This produces a 32-byte array
-//
-//     // Convert checksum to Hexadecimal
-//     let checksum_hex: String = checksum.iter().map(|byte| format!("{:02x}", byte)).collect();
-//
-//     // Return the Hexadecimal checksum as printable data
-//     env::value_return(checksum_hex.as_bytes());
-
-    env::value_return(hex::encode(&result).as_bytes());
-    //hex::encode(result)
-}
 
