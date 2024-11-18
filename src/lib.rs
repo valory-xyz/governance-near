@@ -230,7 +230,7 @@ impl WormholeMessenger {
         sum_gas = sum_gas + VERIFY_CALL_GAS_NUM + COMPLETE_CALL_GAS_NUM;
         require!(env::prepaid_gas() > Gas::from_tgas(sum_gas), "Exceeded max gas");
 
-
+        // Refund sender account
         self.refund_deposit_to_account(storage, sum_deposit, env::predecessor_account_id(), true);
 
         let promise = Promise::new(self.wormhole_core.clone())
@@ -241,6 +241,7 @@ impl WormholeMessenger {
                 VERIFY_CALL_GAS
             );
 
+        // TODO logs
         // Pass all the calls and 0-th index of a promise
         promise.then(
             Self::ext(env::current_account_id())
