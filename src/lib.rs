@@ -48,8 +48,6 @@ pub struct CallResult {
 // WormholeMessenger contract:
 #[near(contract_state)]
 pub struct WormholeMessenger {
-    // Contract owner account Id
-    owner: AccountId,
     // Wormhole Core account Id
     wormhole_core: AccountId,
     // Foreign governor emitter in bytes form
@@ -65,7 +63,6 @@ pub struct WormholeMessenger {
 impl Default for WormholeMessenger {
     fn default() -> Self {
         Self {
-            owner: "".parse().unwrap(),
             wormhole_core: "".parse().unwrap(),
             foreign_governor_emitter: Vec::new(),
             foreign_chain_id: 0,
@@ -79,14 +76,12 @@ impl Default for WormholeMessenger {
 impl WormholeMessenger {
     #[init]
     pub fn new(
-        owner_id: AccountId,
         wormhole_core: AccountId,
         foreign_governor_emitter: Vec<u8>,
         foreign_chain_id: u16
     ) -> Self {
         assert!(!env::state_exists(), "Already initialized");
         Self {
-            owner: owner_id,
             wormhole_core,
             foreign_governor_emitter,
             foreign_chain_id,
@@ -96,21 +91,56 @@ impl WormholeMessenger {
     }
 
     #[private]
-    pub fn refund_deposit_to_account(&self, storage_used: u64, deposit: NearToken, account_id: AccountId, deposit_in: bool) {
+    pub fn refund_deposit_to_account(&self, storage_used: u64, deposit: NearToken, account_id: AccountId) {
         let mut required_cost = env::storage_byte_cost().saturating_mul(storage_used.into());
         required_cost = required_cost.saturating_add(deposit);
 
         let mut refund = env::attached_deposit().into();
-        if deposit_in {
-            require!(required_cost <= refund, "Insufficient required cost");
-            refund = refund.saturating_sub(required_cost);
-        } else {
-            require!(required_cost <= env::account_balance(), "Insufficient required cost");
-            refund = refund.saturating_add(required_cost);
-        }
+        require!(required_cost <= refund, "Insufficient required cost");
+        refund = refund.saturating_sub(required_cost);
+
         if refund > NearToken::from_yoctonear(1) {
             Promise::new(account_id).transfer(refund);
         }
+    }
+
+    #[private]
+    pub fn change_foreign_governor_address(&mut self, new_foreign_governor_address: Vec<u8>) {
+        // Check account validity
+        require!(env::is_valid_account_id(&new_foreign_governor_address), "Account Id is invalid");
+
+        self.foreign_governor_emitter = new_foreign_governor_address.clone();
+
+        env::log_str(&format!(
+            "WormholeMessenger/{}#{}: : {}",
+            file!(),
+            line!(),
+            hex::encode(&new_foreign_governor_address)
+        ));
+    }
+
+	pub fn update_contract(&self) {
+        // Receive the code directly from the input to avoid the
+        // GAS overhead of deserializing parameters
+        let code = env::input().expect("Error: No input").to_vec();
+
+        let hash = env::sha256(&code);
+
+        // Check if caller is authorized to update the contract code
+        if hash != self.upgrade_hash {
+           env::panic_str("InvalidUpgradeContractHash");
+        }
+
+        env::log_str(&format!(
+            "WormholeMessenger/{}#{}: : {}",
+            file!(),
+            line!(),
+            hex::encode(&hash)
+        ));
+
+        // Deploy the contract on self
+        Promise::new(env::current_account_id())
+            .deploy_contract(code);
     }
 
     #[private]
@@ -167,45 +197,6 @@ impl WormholeMessenger {
         }
     }
 
-    #[private]
-    pub fn change_foreign_governor_address(&mut self, new_foreign_governor_address: Vec<u8>) {
-        // Check account validity
-        require!(env::is_valid_account_id(&new_foreign_governor_address), "Account Id is invalid");
-
-        self.foreign_governor_emitter = new_foreign_governor_address.clone();
-
-        env::log_str(&format!(
-            "WormholeMessenger/{}#{}: : {}",
-            file!(),
-            line!(),
-            hex::encode(&new_foreign_governor_address)
-        ));
-    }
-
-	pub fn update_contract(&self) {
-        // Receive the code directly from the input to avoid the
-        // GAS overhead of deserializing parameters
-        let code = env::input().expect("Error: No input").to_vec();
-
-        let hash = env::sha256(&code);
-
-        // Check if caller is authorized to update the contract code
-        if hash != self.upgrade_hash {
-           env::panic_str("InvalidUpgradeContractHash");
-        }
-
-        env::log_str(&format!(
-            "WormholeMessenger/{}#{}: : {}",
-            file!(),
-            line!(),
-            hex::encode(&hash)
-        ));
-
-        // Deploy the contract on self
-        Promise::new(env::current_account_id())
-            .deploy_contract(code);
-    }
-
     #[payable]
     pub fn delivery(&mut self, vaa: String) -> Promise {
         let initial_storage_usage = env::storage_usage();
@@ -231,7 +222,7 @@ impl WormholeMessenger {
         require!(env::prepaid_gas() > Gas::from_tgas(sum_gas), "Exceeded max gas");
 
         // Refund sender account
-        self.refund_deposit_to_account(storage, sum_deposit, env::predecessor_account_id(), true);
+        self.refund_deposit_to_account(storage, sum_deposit, env::predecessor_account_id());
 
         let promise = Promise::new(self.wormhole_core.clone())
             .function_call(
@@ -265,5 +256,9 @@ impl WormholeMessenger {
 
     pub fn get_storage_usage(&self) -> u64 {
         env::storage_usage()
+    }
+
+    pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
+        serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
     }
 }
