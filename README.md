@@ -40,17 +40,17 @@ near account create-account fund-later `ACCOUNT_NAME` autogenerate-new-keypair s
 ### Testing
 Sandbox:
 ```bash
-npx ava test/GovernorRelayer.ts
+npx ava test/WormholeMessenger.ts
 ```
 
 Testnet:
 ```bash
-npx ava --config ava.testnet.config.cjs test/testnet_GovernorRelayer.ts
+npx ava --config ava.testnet.config.cjs test/testnet_WormholeMessenger.ts
 ```
 
 Testing with debug:
 ```bash
-NEAR_WORKSPACES_DEBUG=true npx ava test/GovernorRelayer.ts
+NEAR_WORKSPACES_DEBUG=true npx ava test/WormholeMessenger.ts
 ```
 
 ### Localnet
