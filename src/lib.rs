@@ -2,7 +2,7 @@ use near_sdk::borsh::{self, BorshDeserialize};
 use near_sdk::serde::{Serialize, Deserialize};
 use near_sdk::store::iterable_set::IterableSet;
 use near_sdk::{
-    env, near, ext_contract, require, AccountId, Promise, PromiseOrValue, Gas, PromiseResult, NearToken, log, serde_json
+    env, near, ext_contract, require, AccountId, Promise, PromiseOrValue, Gas, PromiseResult, NearToken, serde_json
 };
 
 pub mod byte_utils;
@@ -24,7 +24,7 @@ const COMPLETE_CALL_GAS: Gas = Gas::from_tgas(COMPLETE_CALL_GAS_NUM);
 const MAX_NUM_CALLS: usize = 10;
 
 // Call struct: target, value, gas, selector, arguments
-#[derive(BorshDeserialize, Serialize, Deserialize)]
+#[derive(BorshDeserialize, Serialize, Deserialize, Debug)]
 pub struct Call {
     // Target contract
     pub contract_id: AccountId,
@@ -152,8 +152,6 @@ impl WormholeMessenger {
             env::panic_str("AlreadyExecuted");
         }
 
-        log!("parsed_vaa: {:?}", parsed_vaa);
-
         // Record processed vaa
         self.dups.insert(parsed_vaa.hash);
         self.dups.flush();
@@ -163,7 +161,6 @@ impl WormholeMessenger {
         }
 
         let data = &parsed_vaa.payload;
-        log!("data: {:?}", data);
         let calls: Vec<Call> = serde_json::from_slice(data).expect("Failed to deserialize Vec<Call>");
         calls
     }
@@ -174,7 +171,15 @@ impl WormholeMessenger {
         if let PromiseResult::Successful(_) = env::promise_result(0) {
             if index < calls.len() {
                 let call = &calls[index];
-                let next_promise = Promise::new(call.contract_id.clone())
+
+                env::log_str(&format!(
+                    "WormholeMessenger/{}#{}: : {:?}",
+                    file!(),
+                    line!(),
+                    call
+                ));
+
+                let next_promise = Promise::new(self.wormhole_core.clone())
                     .function_call(
                         call.method_name.clone(),
                         call.args.clone(),
@@ -212,11 +217,6 @@ impl WormholeMessenger {
         for call in calls.iter() {
             sum_deposit = sum_deposit.saturating_add(call.deposit);
             sum_gas = sum_gas + call.gas + COMPLETE_CALL_GAS_NUM;
-            log!("call contract_id: {}", call.contract_id);
-            log!("call deposit: {}", call.deposit);
-            log!("call method_name: {}", call.method_name);
-            log!("call args: {:?}", call.args);
-            log!("call gas: {:?}", call.gas);
         }
         sum_gas = sum_gas + VERIFY_CALL_GAS_NUM + COMPLETE_CALL_GAS_NUM;
         require!(env::prepaid_gas() > Gas::from_tgas(sum_gas), "Exceeded max gas");
@@ -232,7 +232,6 @@ impl WormholeMessenger {
                 VERIFY_CALL_GAS
             );
 
-        // TODO logs
         // Pass all the calls and 0-th index of a promise
         promise.then(
             Self::ext(env::current_account_id())
@@ -240,6 +239,10 @@ impl WormholeMessenger {
                 .with_attached_deposit(sum_deposit)
                 .on_complete(calls, 0),
         )
+    }
+
+    pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
+        serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
     }
 
     pub fn get_foreign_governor_emitter(&self) -> Vec<u8> {
@@ -250,15 +253,11 @@ impl WormholeMessenger {
         self.foreign_chain_id
     }
 
-    pub fn version(&self) -> String {
-        env!("CARGO_PKG_VERSION").to_owned()
-    }
-
     pub fn get_storage_usage(&self) -> u64 {
         env::storage_usage()
     }
 
-    pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
-        serde_json::to_vec(&calls).expect("Failed to serialize Vec<Call>")
+    pub fn version(&self) -> String {
+        env!("CARGO_PKG_VERSION").to_owned()
     }
 }
