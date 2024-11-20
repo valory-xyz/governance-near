@@ -119,28 +119,16 @@ impl WormholeMessenger {
         ));
     }
 
-	pub fn update_contract(&self) {
-        // Receive the code directly from the input to avoid the
-        // GAS overhead of deserializing parameters
-        let code = env::input().expect("Error: No input").to_vec();
-
-        let hash = env::sha256(&code);
-
-        // Check if caller is authorized to update the contract code
-        if hash != self.upgrade_hash {
-           env::panic_str("InvalidUpgradeContractHash");
-        }
-
+    #[private]
+    pub fn change_upgrade_hash(&mut self, hash: Vec<u8>) {
         env::log_str(&format!(
-            "WormholeMessenger/{}#{}: : {}",
+            "WormholeMessenger/{}#{}: update_contract_hash: {}",
             file!(),
             line!(),
             hex::encode(&hash)
         ));
 
-        // Deploy the contract on self
-        Promise::new(env::current_account_id())
-            .deploy_contract(code);
+        self.upgrade_hash = hash;
     }
 
     #[private]
@@ -179,7 +167,7 @@ impl WormholeMessenger {
                     call
                 ));
 
-                let next_promise = Promise::new(self.wormhole_core.clone())
+                let next_promise = Promise::new(call.contract_id.clone())
                     .function_call(
                         call.method_name.clone(),
                         call.args.clone(),
@@ -239,6 +227,30 @@ impl WormholeMessenger {
                 .with_attached_deposit(sum_deposit)
                 .on_complete(calls, 0),
         )
+    }
+
+	pub fn upgrade_contract(&self) {
+        // Receive the code directly from the input to avoid the
+        // GAS overhead of deserializing parameters
+        let code = env::input().expect("Error: No input").to_vec();
+
+        let hash = env::sha256(&code);
+
+        // Check if caller is authorized to update the contract code
+        if hash != self.upgrade_hash {
+           env::panic_str("InvalidUpgradeContractHash");
+        }
+
+        env::log_str(&format!(
+            "WormholeMessenger/{}#{}: : {}",
+            file!(),
+            line!(),
+            hex::encode(&hash)
+        ));
+
+        // Deploy the contract on self
+        Promise::new(env::current_account_id())
+            .deploy_contract(code);
     }
 
     pub fn to_bytes(&self, calls: Vec<Call>) -> Vec<u8> {
