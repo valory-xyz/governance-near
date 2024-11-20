@@ -37,7 +37,7 @@ test.beforeEach(async t => {
     const root = worker.rootAccount;
     // Deploy the main governance contract
     const contract = await root.devDeploy(
-        "target/wasm32-unknown-unknown/release/governor_near.wasm",
+        "target/wasm32-unknown-unknown/release/governance_near.wasm",
         {initialBalance: NEAR.parse("20 N").toJSON()},
     );
 
