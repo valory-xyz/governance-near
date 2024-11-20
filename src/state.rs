@@ -1,12 +1,10 @@
 use {
     crate::byte_utils::ByteUtils,
-    near_sdk::env,
+    near_sdk::env
 };
 
-use near_sdk::borsh::{self, BorshDeserialize, BorshSerialize};
-
 // Validator Action Approval(VAA) data
-#[derive(BorshDeserialize, BorshSerialize, Debug)]
+#[derive(Debug)]
 pub struct ParsedVAA {
     pub version:            u8,
     pub guardian_set_index: u32,

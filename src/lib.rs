@@ -1,4 +1,3 @@
-use near_sdk::borsh::{self, BorshDeserialize};
 use near_sdk::serde::{Serialize, Deserialize};
 use near_sdk::store::iterable_set::IterableSet;
 use near_sdk::{
@@ -24,7 +23,7 @@ const COMPLETE_CALL_GAS: Gas = Gas::from_tgas(COMPLETE_CALL_GAS_NUM);
 const MAX_NUM_CALLS: usize = 10;
 
 // Call struct: target, value, gas, selector, arguments
-#[derive(BorshDeserialize, Serialize, Deserialize, Debug)]
+#[derive(Serialize, Deserialize, Debug)]
 pub struct Call {
     // Target contract
     pub contract_id: AccountId,
