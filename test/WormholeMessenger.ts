@@ -37,7 +37,7 @@ test.beforeEach(async t => {
     const root = worker.rootAccount;
     // Deploy the main governance contract
     const contract = await root.devDeploy(
-        "target/wasm32-unknown-unknown/release/governor_near.wasm",
+        "target/wasm32-unknown-unknown/release/governance_near.wasm",
         {initialBalance: NEAR.parse("20 N").toJSON()},
     );
 
@@ -123,7 +123,8 @@ test("VAA processing", async t => {
     const {root, contract, wormhole, deployer} = t.context.accounts;
 
     // Corresponding calls above: wormhole.version() and wormhole.get_storage_usage()
-    // NOTE: change generic wormhole_000.sub_olas.olas_000.testnet in calls to wormhole_core
+    // NOTE: change generic wormhole_000.sub_olas.olas_000.testnet in calls to wormhole_core in on_complete:
+    //       Promise::new(call.contract_id.clone()) => Promise::new(self.wormhole_core.clone())
     const vaa = "0100000000010034b1959a6ae5645e12d8f3f1c41aa721c762f4c913fa3013ad67acf20e42af180c4e0807dc1f7c1d0897066666d402cc306540f0f83f5518e757bbbd0f78651d01673c9698000000002712000000000000000000000000471b3f60f08c50dd0ecba1bcd113b66fcc02b63d0000000000000018005b7b22636f6e74726163745f6964223a22776f726d686f6c655f3030302e7375625f6f6c61732e6f6c61735f3030302e746573746e6574222c226465706f736974223a2230222c22676173223a352c226d6574686f645f6e616d65223a2276657273696f6e222c2261726773223a5b5d7d2c7b22636f6e74726163745f6964223a22776f726d686f6c655f3030302e7375625f6f6c61732e6f6c61735f3030302e746573746e6574222c226465706f736974223a2230222c22676173223a352c226d6574686f645f6e616d65223a226765745f73746f726167655f7573616765222c2261726773223a5b5d7d5d";
     // https://wormholescan.io/#/tx/0x26c1c08f7534e9de17401a5e28ce449c9bd525864f603ed4a247e3dd665f8d00?network=Testnet&view=overview
 
