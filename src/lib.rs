@@ -105,24 +105,24 @@ impl WormholeMessenger {
     }
 
     #[private]
-    pub fn change_foreign_governor_address(&mut self, new_foreign_governor_address: Vec<u8>) {
+    pub fn change_foreign_governor_emitter(&mut self, new_foreign_governor_emitter: Vec<u8>) {
         // Check account validity
-        require!(env::is_valid_account_id(&new_foreign_governor_address), "Account Id is invalid");
+        require!(env::is_valid_account_id(&new_foreign_governor_emitter), "Account Id is invalid");
 
-        self.foreign_governor_emitter = new_foreign_governor_address.clone();
+        self.foreign_governor_emitter = new_foreign_governor_emitter.clone();
 
         env::log_str(&format!(
-            "WormholeMessenger/{}#{}: : {}",
+            "WormholeMessenger/{}#{}: change_foreign_governor_emitter: {}",
             file!(),
             line!(),
-            hex::encode(&new_foreign_governor_address)
+            hex::encode(&new_foreign_governor_emitter)
         ));
     }
 
     #[private]
     pub fn change_upgrade_hash(&mut self, hash: Vec<u8>) {
         env::log_str(&format!(
-            "WormholeMessenger/{}#{}: update_contract_hash: {}",
+            "WormholeMessenger/{}#{}: change_upgrade_hash: {}",
             file!(),
             line!(),
             hex::encode(&hash)
@@ -161,7 +161,7 @@ impl WormholeMessenger {
                 let call = &calls[index];
 
                 env::log_str(&format!(
-                    "WormholeMessenger/{}#{}: : {:?}",
+                    "WormholeMessenger/{}#{}: on_complete call: {:?}",
                     file!(),
                     line!(),
                     call
@@ -242,7 +242,7 @@ impl WormholeMessenger {
         }
 
         env::log_str(&format!(
-            "WormholeMessenger/{}#{}: : {}",
+            "WormholeMessenger/{}#{}: upgrade_contract: {}",
             file!(),
             line!(),
             hex::encode(&hash)
