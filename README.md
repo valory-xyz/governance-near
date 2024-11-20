@@ -79,4 +79,5 @@ near state gov_002.sub_olas.olas_000.testnet
 
 ## Acknowledgements
 The tokenomics contracts were inspired and based on the following sources:
-- [Uniswap Labs](https://github.com/Uniswap/v2-core);
+- [Wormhole Docs](https://docs.wormhole.com/);
+- [Wormhole Near](https://github.com/wormhole-foundation/wormhole/blob/main/near/contracts/wormhole/src/lib.rs).
