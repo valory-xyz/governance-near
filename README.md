@@ -1,5 +1,5 @@
-# Registries Near
-Set of Autonolas registries contracts on NEAR.
+# Governance Near
+Set of Autonolas governance contracts on NEAR.
 
 ## Pre-requisites
 The program requires that the following environment is satisfied:
